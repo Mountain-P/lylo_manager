@@ -216,10 +216,28 @@ router.get('/:id/snapshot',
       const productIds = snapshot.map(s => s.productId);
       const products = await Product.find({ _id: { $in: productIds } })
         .select('name sku barcode type parentId attributes wooData stockQty')
-        .populate('parentId', 'name')
+        .populate('parentId', 'name wooData.images')
         .lean();
 
-      const productMap = new Map(products.map(p => [p._id.toString(), p]));
+      const productMap = new Map(products.map(p => {
+        const images = p.wooData?.images?.length
+          ? p.wooData.images
+          : p.parentId?.wooData?.images || [];
+        const displayName = (p.type === 'variation' && p.parentId?.name)
+          ? p.parentId.name
+          : p.name;
+        const attrs = (p.attributes || [])
+          .filter(a => a.option && a.slug !== 'pa_%e8%b2%a8%e6%b3%81' && a.slug !== 'pa_貨況')
+          .map(a => a.option);
+        return [p._id.toString(), {
+          ...p,
+          displayName,
+          variantLabel: attrs.length ? attrs.join(' / ') : null,
+          image: images[0]?.src || null,
+          categories: p.wooData?.categories?.map(c => c.name) || [],
+          parentId: p.parentId?._id || p.parentId
+        }];
+      }));
 
       let enriched = snapshot.map(s => ({
         ...s,
@@ -233,6 +251,7 @@ router.get('/:id/snapshot',
           const p = item.product;
           if (!p) return false;
           return (
+            p.displayName?.toLowerCase().includes(lower) ||
             p.name?.toLowerCase().includes(lower) ||
             p.sku?.toLowerCase().includes(lower) ||
             p.barcode?.toLowerCase().includes(lower)

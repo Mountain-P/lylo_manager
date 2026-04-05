@@ -112,6 +112,7 @@
                 <v-list-item
                   v-for="task in historyTasks"
                   :key="task._id"
+                  @click="openTaskDetail(task._id)"
                   class="task-list-item"
                 >
                   <template #prepend>
@@ -127,8 +128,24 @@
                   </v-list-item-title>
                   <v-list-item-subtitle>
                     {{ task.summary?.countedProducts || 0 }} / {{ task.summary?.totalProducts || 0 }} 商品
+                    <v-chip
+                      v-if="task.summary?.errorProducts > 0"
+                      size="x-small"
+                      color="error"
+                      variant="tonal"
+                      class="ml-1"
+                    >
+                      {{ task.summary.errorProducts }} 異常
+                    </v-chip>
                     · 人員：{{ task.personnel?.map(p => p.name).join('、') }}
+                    <span v-if="task.note" class="text-grey-darken-1"> · {{ task.note }}</span>
                   </v-list-item-subtitle>
+                  <template #append>
+                    <v-btn color="primary" variant="text" size="small" density="compact">
+                      <v-icon size="small">mdi-eye</v-icon>
+                      查看
+                    </v-btn>
+                  </template>
                 </v-list-item>
               </v-list>
             </v-card-text>
@@ -468,6 +485,295 @@
       </v-card>
     </v-dialog>
 
+    <!-- 歷史任務詳情 Dialog -->
+    <v-dialog v-model="detailDialog.show" max-width="900" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-5" style="background: linear-gradient(135deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary-darken-1))); color: white;">
+          <v-icon class="mr-2">mdi-clipboard-text-clock</v-icon>
+          {{ detailDialog.task ? formatTaskDate(detailDialog.task.date) + ' 盤點報告' : '載入中...' }}
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" color="white" density="compact" @click="detailDialog.show = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-card-text v-if="detailDialog.loading" class="text-center py-12">
+          <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
+          <p class="mt-4 text-body-1">載入盤點資料中...</p>
+        </v-card-text>
+
+        <template v-else-if="detailDialog.task">
+          <v-card-text class="pa-5">
+            <!-- 任務摘要 -->
+            <v-row class="mb-4">
+              <v-col cols="6" sm="3">
+                <div class="text-center">
+                  <div class="text-h5 font-weight-bold text-primary">{{ detailDialog.task.summary?.totalProducts || 0 }}</div>
+                  <div class="text-caption text-medium-emphasis">總商品數</div>
+                </div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-center">
+                  <div class="text-h5 font-weight-bold text-success">{{ detailDialog.task.summary?.countedProducts || 0 }}</div>
+                  <div class="text-caption text-medium-emphasis">已盤點</div>
+                </div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-center">
+                  <div class="text-h5 font-weight-bold text-error">{{ detailDialog.task.summary?.errorProducts || 0 }}</div>
+                  <div class="text-caption text-medium-emphasis">異常商品</div>
+                </div>
+              </v-col>
+              <v-col cols="6" sm="3">
+                <div class="text-center">
+                  <div class="text-h5 font-weight-bold" :class="(detailDialog.task.summary?.completionRate || 0) >= 100 ? 'text-success' : 'text-warning'">
+                    {{ detailDialog.task.summary?.completionRate || 0 }}%
+                  </div>
+                  <div class="text-caption text-medium-emphasis">完成率</div>
+                </div>
+              </v-col>
+            </v-row>
+
+            <!-- 任務資訊 -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-text class="text-body-2">
+                <div class="d-flex flex-wrap ga-4">
+                  <div>
+                    <span class="text-medium-emphasis">盤點日期：</span>
+                    <span class="font-weight-medium">{{ formatTaskDate(detailDialog.task.date) }}</span>
+                  </div>
+                  <div>
+                    <span class="text-medium-emphasis">人員：</span>
+                    <span class="font-weight-medium">{{ detailDialog.task.personnel?.map(p => p.name).join('、') || '-' }}</span>
+                  </div>
+                  <div>
+                    <span class="text-medium-emphasis">狀態：</span>
+                    <v-chip size="x-small" :color="detailDialog.task.status === 'completed' ? 'success' : 'grey'" variant="tonal">
+                      {{ detailDialog.task.status === 'completed' ? '已完成' : '已取消' }}
+                    </v-chip>
+                  </div>
+                  <div v-if="detailDialog.task.note">
+                    <span class="text-medium-emphasis">備註：</span>
+                    <span>{{ detailDialog.task.note }}</span>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- 篩選 & 搜尋 -->
+            <v-row class="mb-2" align="center">
+              <v-col cols="12" sm="5">
+                <v-text-field
+                  v-model="detailDialog.search"
+                  label="搜尋商品"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  prepend-inner-icon="mdi-magnify"
+                  @update:model-value="debounceLoadSnapshot"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="8" sm="4">
+                <v-btn-toggle v-model="detailDialog.statusFilter" mandatory density="compact" color="primary" divided variant="outlined">
+                  <v-btn value="">全部</v-btn>
+                  <v-btn value="normal">正常</v-btn>
+                  <v-btn value="error">異常</v-btn>
+                  <v-btn value="uncounted">未盤</v-btn>
+                </v-btn-toggle>
+              </v-col>
+              <v-col cols="4" sm="3" class="text-right">
+                <v-btn variant="outlined" size="small" @click="exportTaskDetail" :loading="detailDialog.exporting">
+                  <v-icon start size="small">mdi-download</v-icon>
+                  匯出 CSV
+                </v-btn>
+              </v-col>
+            </v-row>
+
+            <!-- 商品列表 -->
+            <v-data-table-virtual
+              :headers="snapshotHeaders"
+              :items="detailDialog.snapshotItems"
+              :loading="detailDialog.snapshotLoading"
+              item-value="productId"
+              density="compact"
+              class="snapshot-table"
+              fixed-header
+              height="400"
+              hover
+              @click:row="(e, { item }) => openProductDetail(item)"
+            >
+              <template #item.product="{ item }">
+                <div class="d-flex align-center py-1">
+                  <v-avatar size="36" rounded="lg" class="mr-3 flex-shrink-0" color="grey-lighten-3">
+                    <v-img v-if="item.product?.image" :src="item.product.image" cover />
+                    <v-icon v-else size="20" color="grey">mdi-package-variant-closed</v-icon>
+                  </v-avatar>
+                  <div class="text-truncate-wrapper">
+                    <div class="font-weight-medium text-body-2 text-truncate">{{ item.product?.displayName || item.product?.name || '(已刪除)' }}</div>
+                    <div class="text-caption text-medium-emphasis">
+                      {{ item.product?.sku || '-' }}
+                      <span v-if="item.product?.variantLabel" class="ml-1 text-primary">· {{ item.product.variantLabel }}</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <template #item.snapshotStockQty="{ item }">
+                <span class="font-weight-medium">{{ item.snapshotStockQty }}</span>
+              </template>
+              <template #item.countedQty="{ item }">
+                <span v-if="item.countedQty !== null" class="font-weight-medium">{{ item.countedQty }}</span>
+                <span v-else class="text-grey">-</span>
+              </template>
+              <template #item.diffQty="{ item }">
+                <template v-if="item.diffQty !== null">
+                  <v-chip
+                    :color="item.diffQty === 0 ? 'success' : 'error'"
+                    size="small"
+                    variant="tonal"
+                  >
+                    {{ item.diffQty > 0 ? '+' : '' }}{{ item.diffQty }}
+                  </v-chip>
+                </template>
+                <span v-else class="text-grey">-</span>
+              </template>
+              <template #item.status="{ item }">
+                <v-chip
+                  :color="item.status === 'normal' ? 'success' : item.status === 'error' ? 'error' : 'grey'"
+                  size="small"
+                  variant="tonal"
+                >
+                  {{ item.status === 'normal' ? '正常' : item.status === 'error' ? '異常' : '未盤點' }}
+                </v-chip>
+              </template>
+              <template #item.countedAt="{ item }">
+                <span class="text-body-2">{{ item.countedAt ? formatDateTime(item.countedAt) : '-' }}</span>
+              </template>
+              <template #bottom>
+                <div class="text-center text-caption text-medium-emphasis pa-2" v-if="detailDialog.pagination.totalItems > 0">
+                  共 {{ detailDialog.pagination.totalItems }} 筆
+                  <template v-if="detailDialog.pagination.totalPages > 1">
+                    · 第 {{ detailDialog.pagination.currentPage }} / {{ detailDialog.pagination.totalPages }} 頁
+                    <v-btn size="x-small" variant="text" :disabled="detailDialog.pagination.currentPage <= 1" @click="loadSnapshotPage(detailDialog.pagination.currentPage - 1)">
+                      <v-icon size="small">mdi-chevron-left</v-icon>
+                    </v-btn>
+                    <v-btn size="x-small" variant="text" :disabled="detailDialog.pagination.currentPage >= detailDialog.pagination.totalPages" @click="loadSnapshotPage(detailDialog.pagination.currentPage + 1)">
+                      <v-icon size="small">mdi-chevron-right</v-icon>
+                    </v-btn>
+                  </template>
+                </div>
+              </template>
+            </v-data-table-virtual>
+          </v-card-text>
+        </template>
+      </v-card>
+    </v-dialog>
+
+    <!-- 商品詳情 Dialog -->
+    <v-dialog v-model="productDetail.show" max-width="480">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4 pb-2">
+          <span class="text-h6">商品詳情</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" density="compact" @click="productDetail.show = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider />
+
+        <template v-if="productDetail.item">
+          <!-- 商品圖片 -->
+          <div v-if="productDetail.item.product?.image" class="product-detail-image-wrap">
+            <v-img
+              :src="productDetail.item.product.image"
+              max-height="280"
+              cover
+              class="bg-grey-lighten-4"
+            />
+          </div>
+          <div v-else class="d-flex align-center justify-center bg-grey-lighten-4" style="height: 160px;">
+            <v-icon size="64" color="grey-lighten-1">mdi-image-off</v-icon>
+          </div>
+
+          <v-card-text class="pa-4">
+            <!-- 商品名稱 -->
+            <div class="text-h6 font-weight-bold mb-1">
+              {{ productDetail.item.product?.displayName || productDetail.item.product?.name || '(已刪除)' }}
+            </div>
+            <div v-if="productDetail.item.product?.variantLabel" class="text-body-2 text-primary mb-2">
+              規格：{{ productDetail.item.product.variantLabel }}
+            </div>
+
+            <!-- 基本資訊 -->
+            <v-list density="compact" class="pa-0 mt-2">
+              <v-list-item class="px-0">
+                <template #prepend><v-icon size="18" color="grey" class="mr-2">mdi-barcode</v-icon></template>
+                <v-list-item-title class="text-body-2">SKU</v-list-item-title>
+                <template #append><span class="text-body-2 font-weight-medium">{{ productDetail.item.product?.sku || '-' }}</span></template>
+              </v-list-item>
+              <v-list-item v-if="productDetail.item.product?.barcode" class="px-0">
+                <template #prepend><v-icon size="18" color="grey" class="mr-2">mdi-barcode-scan</v-icon></template>
+                <v-list-item-title class="text-body-2">條碼</v-list-item-title>
+                <template #append><span class="text-body-2 font-weight-medium">{{ productDetail.item.product.barcode }}</span></template>
+              </v-list-item>
+              <v-list-item v-if="productDetail.item.product?.categories?.length" class="px-0">
+                <template #prepend><v-icon size="18" color="grey" class="mr-2">mdi-tag</v-icon></template>
+                <v-list-item-title class="text-body-2">品類</v-list-item-title>
+                <template #append><span class="text-body-2 font-weight-medium">{{ productDetail.item.product.categories.join('、') }}</span></template>
+              </v-list-item>
+            </v-list>
+
+            <v-divider class="my-3" />
+
+            <!-- 盤點數據 -->
+            <div class="text-subtitle-2 font-weight-bold mb-2">盤點數據</div>
+            <v-row dense>
+              <v-col cols="6">
+                <v-card variant="tonal" color="primary" class="pa-3 text-center" rounded="lg">
+                  <div class="text-caption text-medium-emphasis">當下庫存</div>
+                  <div class="text-h5 font-weight-bold">{{ productDetail.item.snapshotStockQty }}</div>
+                </v-card>
+              </v-col>
+              <v-col cols="6">
+                <v-card variant="tonal" :color="productDetail.item.countedQty !== null ? 'info' : 'grey'" class="pa-3 text-center" rounded="lg">
+                  <div class="text-caption text-medium-emphasis">盤點數量</div>
+                  <div class="text-h5 font-weight-bold">{{ productDetail.item.countedQty ?? '-' }}</div>
+                </v-card>
+              </v-col>
+              <v-col cols="6">
+                <v-card
+                  variant="tonal"
+                  :color="productDetail.item.diffQty === null ? 'grey' : productDetail.item.diffQty === 0 ? 'success' : 'error'"
+                  class="pa-3 text-center"
+                  rounded="lg"
+                >
+                  <div class="text-caption text-medium-emphasis">差異數量</div>
+                  <div class="text-h5 font-weight-bold">
+                    <template v-if="productDetail.item.diffQty !== null">
+                      {{ productDetail.item.diffQty > 0 ? '+' : '' }}{{ productDetail.item.diffQty }}
+                    </template>
+                    <template v-else>-</template>
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col cols="6">
+                <v-card variant="tonal" :color="productDetail.item.status === 'normal' ? 'success' : productDetail.item.status === 'error' ? 'error' : 'grey'" class="pa-3 text-center" rounded="lg">
+                  <div class="text-caption text-medium-emphasis">狀態</div>
+                  <div class="text-h6 font-weight-bold">
+                    {{ productDetail.item.status === 'normal' ? '正常' : productDetail.item.status === 'error' ? '異常' : '未盤點' }}
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <div v-if="productDetail.item.countedAt" class="text-caption text-medium-emphasis mt-3 text-right">
+              盤點時間：{{ formatDateTime(productDetail.item.countedAt) }}
+            </div>
+          </v-card-text>
+        </template>
+      </v-card>
+    </v-dialog>
+
     <!-- 確認完成 Dialog -->
     <v-dialog v-model="completeDialog" max-width="400">
       <v-card>
@@ -501,7 +807,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import moment from 'moment'
 import { useInventoryTaskStore } from '@/stores/inventoryTask'
@@ -518,6 +824,34 @@ const historyTasks = ref([])
 const historyLoading = ref(false)
 const exportLoading = ref(false)
 const completeDialog = ref(false)
+
+const detailDialog = reactive({
+  show: false,
+  loading: false,
+  task: null,
+  snapshotItems: [],
+  snapshotLoading: false,
+  exporting: false,
+  search: '',
+  statusFilter: '',
+  pagination: { currentPage: 1, totalPages: 1, totalItems: 0 }
+})
+
+const snapshotHeaders = [
+  { title: '商品', key: 'product', sortable: false, width: '30%' },
+  { title: '當下庫存', key: 'snapshotStockQty', align: 'center', width: '12%' },
+  { title: '盤點數量', key: 'countedQty', align: 'center', width: '12%' },
+  { title: '差異', key: 'diffQty', align: 'center', width: '12%' },
+  { title: '狀態', key: 'status', align: 'center', width: '12%' },
+  { title: '盤點時間', key: 'countedAt', width: '22%' }
+]
+
+const productDetail = reactive({
+  show: false,
+  item: null
+})
+
+let searchDebounceTimer = null
 
 const scopeOptions = [
   { title: '全部商品', value: 'all' },
@@ -636,9 +970,9 @@ const generateReport = async () => {
     }
 
     const csvContent = [
-      ['商品名稱', 'SKU', '快照庫存', '盤點數量', '差異數量', '盤點時間'].join(','),
+      ['商品名稱', 'SKU', '當下庫存', '盤點數量', '差異數量', '盤點時間'].join(','),
       ...items.map(item => [
-        item.product?.name || '',
+        item.product?.displayName || item.product?.name || '',
         item.product?.sku || '',
         item.snapshotStockQty,
         item.countedQty,
@@ -667,9 +1001,9 @@ const exportData = async () => {
     const items = data.snapshot || []
 
     const csvContent = [
-      ['商品名稱', 'SKU', '快照庫存', '當前庫存', '盤點數量', '差異數量', '狀態', '盤點時間'].join(','),
+      ['商品名稱', 'SKU', '當下庫存', '當前庫存', '盤點數量', '差異數量', '狀態', '盤點時間'].join(','),
       ...items.map(item => [
-        item.product?.name || '',
+        item.product?.displayName || item.product?.name || '',
         item.product?.sku || '',
         item.snapshotStockQty,
         item.currentStockQty ?? '',
@@ -691,6 +1025,93 @@ const exportData = async () => {
     uiStore.showError('匯出數據失敗')
   } finally {
     exportLoading.value = false
+  }
+}
+
+const openTaskDetail = async (taskId) => {
+  detailDialog.show = true
+  detailDialog.loading = true
+  detailDialog.task = null
+  detailDialog.snapshotItems = []
+  detailDialog.search = ''
+  detailDialog.statusFilter = ''
+  detailDialog.pagination = { currentPage: 1, totalPages: 1, totalItems: 0 }
+
+  try {
+    const task = await taskStore.fetchTaskDetail(taskId)
+    detailDialog.task = task
+    detailDialog.loading = false
+    await loadSnapshotPage(1)
+  } catch (error) {
+    uiStore.showError('載入任務詳情失敗')
+    detailDialog.show = false
+  }
+}
+
+const loadSnapshotPage = async (page = 1) => {
+  if (!detailDialog.task) return
+  try {
+    detailDialog.snapshotLoading = true
+    const params = { page, limit: 100 }
+    if (detailDialog.statusFilter) params.status = detailDialog.statusFilter
+    if (detailDialog.search) params.search = detailDialog.search
+
+    const data = await taskStore.fetchSnapshot(detailDialog.task._id, params)
+    detailDialog.snapshotItems = data.snapshot || []
+    detailDialog.pagination = data.pagination || { currentPage: page, totalPages: 1, totalItems: 0 }
+  } catch (error) {
+    console.error('載入快照失敗:', error)
+  } finally {
+    detailDialog.snapshotLoading = false
+  }
+}
+
+const debounceLoadSnapshot = () => {
+  clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => loadSnapshotPage(1), 300)
+}
+
+watch(() => detailDialog.statusFilter, () => loadSnapshotPage(1))
+
+const openProductDetail = (item) => {
+  productDetail.item = item
+  productDetail.show = true
+}
+
+const exportTaskDetail = async () => {
+  if (!detailDialog.task) return
+  try {
+    detailDialog.exporting = true
+    const data = await taskStore.fetchSnapshot(detailDialog.task._id, {
+      limit: 10000,
+      status: detailDialog.statusFilter || undefined
+    })
+    const items = data.snapshot || []
+
+    const csvContent = [
+      ['商品名稱', 'SKU', '當下庫存', '盤點數量', '差異數量', '狀態', '盤點時間'].join(','),
+      ...items.map(item => [
+        `"${(item.product?.displayName || item.product?.name || '').replace(/"/g, '""')}"`,
+        item.product?.sku || '',
+        item.snapshotStockQty,
+        item.countedQty ?? '',
+        item.diffQty ?? '',
+        item.status === 'normal' ? '正常' : item.status === 'error' ? '異常' : '未盤點',
+        item.countedAt ? moment(item.countedAt).format('YYYY-MM-DD HH:mm:ss') : ''
+      ].join(','))
+    ].join('\n')
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `盤點報告_${formatTaskDate(detailDialog.task.date)}.csv`
+    link.click()
+    URL.revokeObjectURL(link.href)
+    uiStore.showSuccess('盤點報告已匯出')
+  } catch (error) {
+    uiStore.showError('匯出失敗')
+  } finally {
+    detailDialog.exporting = false
   }
 }
 
@@ -730,5 +1151,19 @@ onMounted(async () => {
 
 .task-list-item:hover {
   background-color: rgba(var(--v-theme-primary), 0.04);
+}
+
+.text-truncate-wrapper {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.snapshot-table :deep(tbody tr) {
+  cursor: pointer;
+}
+
+.product-detail-image-wrap {
+  position: relative;
+  overflow: hidden;
 }
 </style>

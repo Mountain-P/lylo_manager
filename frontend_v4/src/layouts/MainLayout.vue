@@ -112,6 +112,11 @@
       </v-container>
     </v-main>
 
+    <!-- Footer -->
+    <v-footer app class="text-center text-caption text-medium-emphasis pa-2" style="font-size: 0.7rem !important;">
+      <div class="w-100">盤點小助手 {{ appVersion }}</div>
+    </v-footer>
+
     <!-- 全域 Snackbar -->
     <v-snackbar v-model="uiStore.snackbar.show" :color="uiStore.snackbar.color" :timeout="uiStore.snackbar.timeout"
       location="top">
@@ -127,7 +132,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
@@ -139,6 +144,8 @@ const route = useRoute()
 const authStore = useAuthStore()
 const uiStore = useUIStore()
 const inventoryStore = useInventoryStore()
+
+const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
 
 let syncPollTimer = null
 

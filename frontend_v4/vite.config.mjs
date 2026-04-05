@@ -59,7 +59,15 @@ export default defineConfig({
       'unplugin-vue-router/data-loaders/basic',
     ],
   },
-  define: { 'process.env': {} },
+  define: {
+    'process.env': {},
+    '__APP_VERSION__': JSON.stringify(
+      'v' + new Date().toLocaleString('en-GB', { timeZone: 'Asia/Taipei', hour12: false })
+        .replace(/(\d{2})\/(\d{2})\/(\d{4}), (\d{2}):(\d{2}):\d{2}/, (_, dd, mm, yyyy, HH, mi) =>
+          HH + mi + yyyy.slice(2) + mm + dd
+        )
+    ),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('src', import.meta.url)),
