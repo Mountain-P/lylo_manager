@@ -2,6 +2,7 @@ const express = require('express');
 const { body, query, validationResult } = require('express-validator');
 const Product = require('../models/Product');
 const InventoryLog = require('../models/InventoryLog');
+const InventoryTask = require('../models/InventoryTask');
 const StockHistory = require('../models/StockHistory');
 const { 
   authenticateToken, 
@@ -34,65 +35,75 @@ router.post('/count/batch',
     body('counts').isArray({ min: 1 }).withMessage('counts 必須是陣列且不能為空'),
     body('counts.*.productId').isMongoId().withMessage('無效的商品ID'),
     body('counts.*.countedQty').isInt({ min: 0 }).withMessage('盤點數量必須是非負整數'),
-    body('taskId').optional().isMongoId().withMessage('無效的任務ID'),
+    body('taskId').isMongoId().withMessage('盤點任務ID為必填'),
   ],
   handleValidationErrors,
   logUserActivity('批次商品盤點'),
   async (req, res) => {
-    // --- DEBUGGING: Log the exact request body ---
-    console.log('--- BATCH COUNT REQUEST BODY ---');
-    console.log(JSON.stringify(req.body, null, 2));
-    // --- END DEBUGGING ---
-
     try {
       const { counts, taskId } = req.body;
       const user = req.user;
       const deviceInfo = { userAgent: req.get('User-Agent'), ip: getClientIP(req) };
-      
+
+      const task = await InventoryTask.findById(taskId);
+      if (!task) {
+        return res.status(404).json({ message: '找不到指定的盤點任務' });
+      }
+      if (task.status !== 'in_progress') {
+        return res.status(400).json({ message: '此盤點任務已結束，無法繼續盤點' });
+      }
+
       const results = [];
 
       for (const count of counts) {
         const product = await Product.findById(count.productId);
         if (!product || !product.isActive) {
-          console.warn(`批次盤點警告：找不到或未啟用商品ID ${count.productId}，已跳過。`);
           results.push({ productId: count.productId, status: 'error', message: 'Product not found or inactive' });
           continue;
         }
+
+        const snapshotItem = task.stockSnapshot.find(
+          s => s.productId.toString() === count.productId.toString()
+        );
+        const snapshotStockQty = snapshotItem ? snapshotItem.snapshotStockQty : product.stockQty;
         
         const previousQty = product.countedQty;
         const newCountedQty = parseInt(count.countedQty);
 
-        if (previousQty !== newCountedQty) {
-          const inventoryLog = new InventoryLog({
-            productId: product._id,
-            userId: user._id,
-            taskId: taskId || undefined,
-            countedQty: newCountedQty,
-            previousQty,
-            expectedQty: product.stockQty,
-            salesQty: product.salesQty,
-            method: 'manual-batch',
-            deviceInfo
-          });
-          await inventoryLog.save();
-  
-          // 更新產品盤點資料
-          product.countedQty = newCountedQty;
-          product.lastCountedAt = new Date();
-          product.lastCountedBy = user._id;
-          await product.save();
+        const inventoryLog = new InventoryLog({
+          productId: product._id,
+          userId: user._id,
+          taskId,
+          countedQty: newCountedQty,
+          previousQty,
+          expectedQty: snapshotStockQty,
+          snapshotStockQty,
+          salesQty: product.salesQty,
+          method: 'manual-batch',
+          deviceInfo
+        });
+        await inventoryLog.save();
 
-          results.push({ productId: product._id, status: 'updated' });
-        } else {
-          results.push({ productId: product._id, status: 'unchanged' });
+        product.countedQty = newCountedQty;
+        product.lastCountedAt = new Date();
+        product.lastCountedBy = user._id;
+        await product.save();
+
+        if (snapshotItem) {
+          task.recordCount(count.productId, newCountedQty, user._id);
         }
+
+        results.push({ productId: product._id, status: 'updated' });
       }
+
+      await task.save();
       
-      console.log(`📊 批次盤點完成 by ${user.name}: 共處理 ${counts.length} 個項目`);
+      console.log(`📊 批次盤點完成 by ${user.name}: 共處理 ${counts.length} 個項目, 任務 ${taskId}`);
 
       res.json({
         message: '批次盤點成功',
-        results
+        results,
+        summary: task.summary
       });
 
     } catch (error) {
@@ -120,9 +131,8 @@ router.post('/count/:productId',
       .isLength({ max: 500 })
       .withMessage('備註不能超過500個字元'),
     body('taskId')
-      .optional()
       .isMongoId()
-      .withMessage('無效的任務ID')
+      .withMessage('盤點任務ID為必填')
   ],
   handleValidationErrors,
   logUserActivity('商品盤點'),
@@ -131,22 +141,35 @@ router.post('/count/:productId',
       const { productId } = req.params;
       const { countedQty, method = 'manual', note, taskId } = req.body;
 
-      const product = await Product.findById(productId);
-      if (!product || !product.isActive) {
-        return res.status(404).json({
-          message: '找不到指定商品'
-        });
+      const task = await InventoryTask.findById(taskId);
+      if (!task) {
+        return res.status(404).json({ message: '找不到指定的盤點任務' });
+      }
+      if (task.status !== 'in_progress') {
+        return res.status(400).json({ message: '此盤點任務已結束，無法繼續盤點' });
       }
 
+      const product = await Product.findById(productId);
+      if (!product || !product.isActive) {
+        return res.status(404).json({ message: '找不到指定商品' });
+      }
+
+      const snapshotItem = task.stockSnapshot.find(
+        s => s.productId.toString() === productId.toString()
+      );
+      const snapshotStockQty = snapshotItem ? snapshotItem.snapshotStockQty : product.stockQty;
+
       const previousQty = product.countedQty;
+      const parsedQty = parseInt(countedQty);
 
       const inventoryLog = new InventoryLog({
         productId: product._id,
         userId: req.user._id,
-        taskId: taskId || undefined,
-        countedQty: parseInt(countedQty),
+        taskId,
+        countedQty: parsedQty,
         previousQty,
-        expectedQty: product.stockQty,
+        expectedQty: snapshotStockQty,
+        snapshotStockQty,
         salesQty: product.salesQty,
         note: note || undefined,
         method,
@@ -158,33 +181,33 @@ router.post('/count/:productId',
 
       await inventoryLog.save();
 
-      // 更新產品盤點資料
-      await product.updateCount(parseInt(countedQty), req.user._id);
+      await product.updateCount(parsedQty, req.user._id);
 
-      // 重新獲取更新後的產品資料（包含虛擬欄位）
+      if (snapshotItem) {
+        task.recordCount(productId, parsedQty, req.user._id);
+        await task.save();
+      }
+
       const updatedProduct = await Product.findById(productId)
         .populate('lastCountedBy', 'name email');
 
-      console.log(`📊 盤點完成: ${product.name} (${product.sku}) - 數量: ${countedQty} - 員工: ${req.user.name}`);
+      console.log(`📊 盤點完成: ${product.name} (${product.sku}) - 數量: ${countedQty} - 員工: ${req.user.name} - 任務: ${taskId}`);
 
       res.json({
         message: '盤點完成',
         product: updatedProduct,
-        inventoryLog: await inventoryLog.populate('userId', 'name email')
+        inventoryLog: await inventoryLog.populate('userId', 'name email'),
+        taskSummary: task.summary
       });
 
     } catch (error) {
       console.error('盤點錯誤:', error);
       
       if (error.name === 'CastError') {
-        return res.status(400).json({
-          message: '無效的商品ID格式'
-        });
+        return res.status(400).json({ message: '無效的商品ID格式' });
       }
 
-      res.status(500).json({
-        message: '盤點過程發生錯誤'
-      });
+      res.status(500).json({ message: '盤點過程發生錯誤' });
     }
   }
 );

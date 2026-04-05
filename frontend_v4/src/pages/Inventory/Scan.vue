@@ -223,6 +223,7 @@ import moment from 'moment'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useProductsStore } from '@/stores/products'
 import { useInventoryStore } from '@/stores/inventory'
+import { useInventoryTaskStore } from '@/stores/inventoryTask'
 import { useUIStore } from '@/stores/ui'
 
 const router = useRouter()
@@ -230,6 +231,7 @@ const { mobile: isMobile } = useDisplay()
 
 const productsStore = useProductsStore()
 const inventoryStore = useInventoryStore()
+const taskStore = useInventoryTaskStore()
 const uiStore = useUIStore()
 
 // Scanner state
@@ -313,7 +315,12 @@ const onBarcodeDetected = async (decodedText) => {
     if (existing) {
       try {
         existing.countedQty += 1
-        await inventoryStore.countProduct({ productId: existing.productId, countedQty: existing.countedQty, method: 'barcode' })
+        await inventoryStore.countProduct({
+          productId: existing.productId,
+          countedQty: existing.countedQty,
+          method: 'barcode',
+          taskId: taskStore.currentTaskId
+        })
         vibrate()
         uiStore.showSuccess(`${existing.productName} → ${existing.countedQty}`)
       } catch (e) {
@@ -403,7 +410,8 @@ const submitCount = async () => {
     await inventoryStore.countProduct({
       productId: activeProduct.value._id,
       countedQty: countQty.value,
-      method: 'barcode'
+      method: 'barcode',
+      taskId: taskStore.currentTaskId
     })
 
     scanHistory.value.unshift({
@@ -444,7 +452,13 @@ const clearHistory = () => {
 }
 
 // --- Lifecycle ---
-onMounted(() => {
+onMounted(async () => {
+  await taskStore.restoreTask()
+  if (!taskStore.hasCurrentTask) {
+    uiStore.showError('請先建立或選擇盤點任務')
+    router.replace('/inventory')
+    return
+  }
   startScanner()
 })
 

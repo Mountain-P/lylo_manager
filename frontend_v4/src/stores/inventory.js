@@ -86,20 +86,37 @@ export const useInventoryStore = defineStore('inventory', () => {
     syncStatus.value = { ...syncStatus.value, ...status }
   }
 
-  const countProduct = async ({ productId, countedQty, note, method = 'manual' }) => {
+  const countProduct = async ({ productId, countedQty, note, method = 'manual', taskId }) => {
     try {
       setLoading(true)
+
+      if (!taskId) {
+        const { useInventoryTaskStore } = await import('./inventoryTask')
+        const taskStore = useInventoryTaskStore()
+        taskId = taskStore.currentTaskId
+      }
+
+      if (!taskId) {
+        throw new Error('請先選擇或建立盤點任務')
+      }
       
       const response = await api.post(`/inventory/count/${productId}`, {
         countedQty,
         note,
-        method
+        method,
+        taskId
       })
       
-      const log = response.data.log
-      addLog(log)
+      const log = response.data.inventoryLog || response.data.log
+      if (log) addLog(log)
+
+      if (response.data.taskSummary) {
+        const { useInventoryTaskStore } = await import('./inventoryTask')
+        const taskStore = useInventoryTaskStore()
+        taskStore.updateCurrentSummary(response.data.taskSummary)
+      }
       
-      return log
+      return response.data
     } catch (error) {
       console.error('商品盤點失敗:', error)
       throw error
@@ -108,20 +125,26 @@ export const useInventoryStore = defineStore('inventory', () => {
     }
   }
 
-  const batchCountProducts = async (countData) => {
+  const batchCountProducts = async (countData, taskId) => {
     try {
       setLoading(true)
+
+      if (!taskId) {
+        const { useInventoryTaskStore } = await import('./inventoryTask')
+        const taskStore = useInventoryTaskStore()
+        taskId = taskStore.currentTaskId
+      }
+
+      if (!taskId) {
+        throw new Error('請先選擇或建立盤點任務')
+      }
       
       const response = await api.post('/inventory/count/batch', {
-        counts: countData
+        counts: countData,
+        taskId
       })
       
-      console.log('批量盤點API響應:', response.data)
-      
-      // 後端返回的是 results 不是 logs
       const results = response.data.results || []
-      
-      // 如果需要添加到logs，創建簡單的log條目
       results.forEach(result => {
         if (result.status === 'updated') {
           addLog({
@@ -132,6 +155,12 @@ export const useInventoryStore = defineStore('inventory', () => {
           })
         }
       })
+
+      if (response.data.summary) {
+        const { useInventoryTaskStore } = await import('./inventoryTask')
+        const taskStore = useInventoryTaskStore()
+        taskStore.updateCurrentSummary(response.data.summary)
+      }
       
       return response.data
     } catch (error) {

@@ -189,54 +189,14 @@ POST /api/inventory/count/:productId
 
 ---
 
-## 五、潛在問題與需確認事項
+## 五、業主確認結果（2026-04-05）
 
-### 5.1 快照資料量
-
-如果有 2000 個商品，每建立一個任務就要存 2000 筆 snapshot 記錄。
-
-**影響**：
-- 單一 MongoDB document 16MB 限制。2000 筆 snapshot（每筆約 200 bytes）≈ 400KB，遠低於限制
-- 但如果商品數未來成長到 10,000+，建議將 snapshot 拆成獨立 collection（`TaskStockSnapshot`）
-
-**建議**：目前商品數量下，嵌入式 snapshot 可行。先以嵌入式做，未來需要時再拆分。
-
-### 5.2 同一天能否開多個任務？
-
-業主說「由日期來判斷是不是新的盤點任務」，但同一天可能需要：
-- 早上盤一次、下午 WooCommerce 同步後再盤一次
-- 不同區域/品類分開盤點
-
-**建議**：同一天允許多個任務，以 `date + 建立時間` 作為識別，而非僅 date 唯一。UI 上顯示為「2026-04-05 #1」、「2026-04-05 #2」。
-
-### 5.3 盤點期間 WooCommerce 同步怎麼處理？
-
-快照鎖定後，WooCommerce 同步更新的 `stockQty` 不會影響任務中的比對。但如果盤點持續多天：
-- 快照是 D1 的庫存
-- D2 又賣了很多，實際庫存已經和 D1 差很多
-- 員工 D2 去數倉庫，數到的是 D2 的實際量，但比對基準是 D1 的 stockQty
-
-**建議**：
-- 任務建立後，在任務詳情顯示「⚠️ 庫存快照時間：2026-04-05 09:30，距今已過 X 小時」
-- 超過 24 小時未完成的任務，提示建議建立新任務
-- 提供「刷新快照」功能（主管權限），可在任務中重新擷取最新庫存
-
-### 5.4 taskId 是否改為必填？
-
-目前盤點 API 的 `taskId` 是選填。如果改為任務制度，所有盤點都應歸屬到任務。
-
-**建議**：
-- 改為必填，前端必須先選擇/建立任務才能開始盤點
-- 取消「無任務的散裝盤點」模式
-- 掃碼頁和商品列表頁都需要知道當前任務 context
-
-### 5.5 快照範圍：全部商品 or 可選範圍？
-
-目前每次盤點不一定盤所有商品。快照是存全部商品還是可選範圍？
-
-**建議**：
-- 預設快照全部 active 商品（排除草稿/預購）
-- 未來可擴充為選擇特定品類快照，但初期簡化為全部
+| # | 問題 | 業主回覆 |
+|---|------|---------|
+| 1 | 同一天能否開多個任務？ | **可以**，盤點任務就是任務，什麼時候開都可以 |
+| 2 | 快照範圍 | **預設全部商品**，但也可以只盤特定品類 |
+| 3 | 跨天盤點 / 庫存漂移 | 提供「重新整理」功能：**未盤點的商品**重新同步最新庫存；**已盤點的商品**鎖定在盤點當下的系統數量，並記錄盤點日期及時間 |
+| 4 | taskId 是否改為必填 | **改為必填**，所有盤點必須歸屬到任務 |
 
 ---
 
@@ -264,15 +224,32 @@ POST /api/inventory/count/:productId
 
 ---
 
-## 七、實作優先順序建議
+## 七、實作完成紀錄
 
-| 順序 | 項目 | 估計工時 |
-|------|------|---------|
-| 1 | InventoryTask schema 擴充 + 建立任務時生成快照 | 2-3 hr |
-| 2 | 盤點 API 改用快照值比對 + taskId 必填 | 2-3 hr |
-| 3 | 前端任務選擇器 UI（進入盤點前必選任務） | 3-4 hr |
-| 4 | 盤點首頁統計改為任務維度 | 2 hr |
-| 5 | 掃碼頁 + 商品列表頁帶任務 context | 2-3 hr |
-| 6 | 盤點報告/匯出改為任務維度 | 1-2 hr |
-| 7 | 測試 + 既有資料處理 | 2 hr |
-| **合計** | | **~15-18 hr** |
+### 已修改檔案
+
+#### 後端
+
+| 檔案 | 修改內容 |
+|------|---------|
+| `models/InventoryTask.js` | 全面重寫：新增 `stockSnapshot[]`、`summary`、`snapshotScope`、`snapshotCategories`、`snapshotCreatedAt`、`lastRefreshedAt`；新增 `recalcSummary()`、`recordCount()`、`refreshUncounted()` 方法 |
+| `models/InventoryLog.js` | `taskId` 改為必填；新增 `snapshotStockQty` 欄位 |
+| `routes/inventoryTask.js` | 全面重寫：建立任務時生成庫存快照；新增 `GET /:id/snapshot`（含搜尋/篩選/分頁）；新增 `PUT /:id/refresh`（重新整理未盤點庫存）；`GET /active` 改為返回多個進行中任務 |
+| `routes/inventory.js` | `POST /count/:productId` 和 `POST /count/batch` 的 `taskId` 改為必填；盤點時從任務快照取 `snapshotStockQty` 計算差異；盤點結果同步寫入任務快照 |
+
+#### 前端
+
+| 檔案 | 修改內容 |
+|------|---------|
+| `stores/inventoryTask.js` | 全面重寫：`currentTask` 取代 `activeTask`；新增 `resumeTask()`、`restoreTask()`（localStorage 持久化）、`refreshSnapshot()`、`fetchSnapshot()`；支援多個進行中任務 |
+| `stores/inventory.js` | `countProduct()` 和 `batchCountProducts()` 自動帶入 `taskId`；盤點完成後自動更新任務 summary |
+| `pages/Inventory/Index.vue` | 全面重寫：無任務時顯示任務選擇器（進行中列表 + 建立新任務 + 歷史記錄）；有任務時顯示任務維度統計 + 盤點工作台；新增品類範圍選擇；新增「重新整理未盤點庫存」按鈕 |
+| `pages/Inventory/Scan.vue` | mount 時檢查任務 context，無任務則導回盤點管理；所有盤點呼叫帶 `taskId` |
+| `pages/Products/Index.vue` | 單品/批量盤點前檢查任務 context；所有盤點呼叫帶 `taskId` |
+
+### 核心設計決策
+
+1. **庫存快照嵌入式存儲**：`stockSnapshot` 直接存在 `InventoryTask` document 中（商品數 ~2000，約 400KB，遠低於 16MB 限制）
+2. **未盤點商品可刷新**：`refreshUncounted()` 只更新 `status === 'uncounted'` 的商品快照，已盤點的永遠鎖定
+3. **任務 context 持久化**：前端用 `localStorage` 記住 `currentTaskId`，重新整理頁面不會遺失
+4. **向後相容**：`Product.countedQty` / `lastCountedAt` 仍持續更新，不影響全域商品列表的顯示

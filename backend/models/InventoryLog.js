@@ -16,7 +16,12 @@ const inventoryLogSchema = new mongoose.Schema({
   taskId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'InventoryTask',
+    required: [true, '盤點任務ID為必填欄位'],
     index: true
+  },
+  snapshotStockQty: {
+    type: Number,
+    default: 0
   },
   countedQty: {
     type: Number,

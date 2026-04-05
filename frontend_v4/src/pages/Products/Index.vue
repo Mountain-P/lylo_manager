@@ -596,6 +596,7 @@ import moment from 'moment'
 import _ from 'lodash'
 import { useProductsStore } from '@/stores/products'
 import { useInventoryStore } from '@/stores/inventory'
+import { useInventoryTaskStore } from '@/stores/inventoryTask'
 import { useUIStore } from '@/stores/ui'
 
 // Composables
@@ -605,6 +606,7 @@ const route = useRoute()
 // Stores
 const productsStore = useProductsStore()
 const inventoryStore = useInventoryStore()
+const taskStore = useInventoryTaskStore()
 const uiStore = useUIStore()
 
 // Reactive data
@@ -825,16 +827,21 @@ const closeVariationCountDialog = () => {
 }
 
 const submitCount = async () => {
+  if (!taskStore.hasCurrentTask) {
+    uiStore.showError('請先到盤點管理建立或選擇盤點任務')
+    return
+  }
   countDialog.loading = true
   try {
     await inventoryStore.countProduct({
       productId: countDialog.product._id,
       countedQty: countDialog.quantity,
+      taskId: taskStore.currentTaskId
     })
     
     uiStore.showSuccess('盤點完成')
     closeCountDialog()
-    await refreshData() // Refresh data
+    await refreshData()
   } catch (error) {
     console.error('盤點失敗:', error)
     uiStore.showError('盤點失敗')
@@ -864,6 +871,10 @@ const setQuickCount = (num) => {
 }
 
 const submitVariationCount = async () => {
+  if (!taskStore.hasCurrentTask) {
+    uiStore.showError('請先到盤點管理建立或選擇盤點任務')
+    return
+  }
   variationCountDialog.loading = true
   try {
     const counts = variationCountDialog.variations.map(v => ({
@@ -871,7 +882,7 @@ const submitVariationCount = async () => {
       countedQty: parseInt(v.newCountedQty || 0, 10)
     }))
     
-    await inventoryStore.batchCountProducts(counts)
+    await inventoryStore.batchCountProducts(counts, taskStore.currentTaskId)
     
     uiStore.showSuccess('批量盤點完成')
     closeVariationCountDialog()
@@ -984,6 +995,7 @@ const handleExpandChange = async (newExpanded) => {
 
 // 初始化時從 URL 還原篩選條件
 onMounted(async () => {
+  taskStore.restoreTask()
   restoreFiltersFromURL()
 
   productsStore.fetchCategories()
