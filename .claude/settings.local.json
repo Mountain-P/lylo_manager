@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /root/lylo_manager -type f -name *.js -o -name *.vue -o -name *.json -o -name *.mjs -o -name *.md -o -name *.conf -o -name .env)"
+    ]
+  }
+}

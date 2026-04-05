@@ -1,0 +1,210 @@
+// 全域樣式
+
+// 盤點異常商品的紅色樣式
+.count-error-row {
+  background-color: rgba(255, 82, 82, 0.1) !important;
+  
+  &:hover {
+    background-color: rgba(255, 82, 82, 0.2) !important;
+  }
+}
+
+// 載入狀態樣式
+.loading-overlay {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+// 條碼掃描器樣式
+.barcode-scanner {
+  max-width: 100%;
+  max-height: 400px;
+  
+  video {
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+}
+
+// 數據表格樣式
+.v-data-table {
+  .v-data-table__wrapper {
+    overflow-x: auto;
+  }
+  
+  // 響應式表格
+  @media (max-width: 600px) {
+    .v-data-table__wrapper {
+      font-size: 12px;
+    }
+  }
+}
+
+// 統計卡片樣式
+.stats-card {
+  .v-card__text {
+    padding: 16px;
+  }
+}
+
+// 自定義工具列樣式
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+// 麵包屑樣式
+.breadcrumbs {
+  .v-breadcrumbs {
+    padding: 0 16px;
+  }
+}
+
+// 搜尋欄位樣式
+.search-field {
+  .v-input__control {
+    min-height: 40px;
+  }
+}
+
+// 狀態晶片樣式
+.status-chip {
+  &.success {
+    background-color: #4caf50 !important;
+    color: white !important;
+  }
+  
+  &.error {
+    background-color: #f44336 !important;
+    color: white !important;
+  }
+  
+  &.warning {
+    background-color: #ff9800 !important;
+    color: white !important;
+  }
+}
+
+// 對話框樣式
+.dialog-content {
+  .v-card__title {
+    background-color: #f5f5f5;
+    font-weight: 500;
+  }
+}
+
+// 表單樣式
+.form-section {
+  margin-bottom: 24px;
+  
+  .section-title {
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: #1976d2;
+  }
+}
+
+// 響應式設計
+@media (max-width: 768px) {
+  .mobile-hide {
+    display: none !important;
+  }
+  
+  .v-data-table {
+    font-size: 14px;
+  }
+  
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+    
+    .v-btn {
+      margin-bottom: 8px;
+    }
+  }
+}
+
+// 列印樣式
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  .v-data-table {
+    border: 1px solid #ddd;
+    
+    .v-data-table__wrapper {
+      overflow: visible !important;
+    }
+  }
+}
+
+// 深色主題適配
+.theme--dark {
+  .count-error-row {
+    background-color: rgba(255, 82, 82, 0.2) !important;
+    
+    &:hover {
+      background-color: rgba(255, 82, 82, 0.3) !important;
+    }
+  }
+}
+
+// 動畫效果
+.fade-transition {
+  transition: opacity 0.3s ease;
+}
+
+.slide-transition {
+  transition: transform 0.3s ease;
+}
+
+// 輔助類別
+.text-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.full-width {
+  width: 100% !important;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.text-right {
+  text-align: right;
+}
+
+// 間距工具類別
+.mt-xs { margin-top: 4px !important; }
+.mt-sm { margin-top: 8px !important; }
+.mt-md { margin-top: 16px !important; }
+.mt-lg { margin-top: 24px !important; }
+.mt-xl { margin-top: 32px !important; }
+
+.mb-xs { margin-bottom: 4px !important; }
+.mb-sm { margin-bottom: 8px !important; }
+.mb-md { margin-bottom: 16px !important; }
+.mb-lg { margin-bottom: 24px !important; }
+.mb-xl { margin-bottom: 32px !important; }
+
+.ml-xs { margin-left: 4px !important; }
+.ml-sm { margin-left: 8px !important; }
+.ml-md { margin-left: 16px !important; }
+.ml-lg { margin-left: 24px !important; }
+.ml-xl { margin-left: 32px !important; }
+
+.mr-xs { margin-right: 4px !important; }
+.mr-sm { margin-right: 8px !important; }
+.mr-md { margin-right: 16px !important; }
+.mr-lg { margin-right: 24px !important; }
+.mr-xl { margin-right: 32px !important; } 
