@@ -41,7 +41,12 @@ router.post('/',
 
       const productFilter = {
         isActive: true,
-        type: { $in: ['simple', 'variation'] }
+        type: { $in: ['simple', 'variation'] },
+        $nor: [{
+          attributes: {
+            $elemMatch: { name: '貨況', option: 'pre-order' }
+          }
+        }]
       };
 
       if (scope === 'categories' && categories.length > 0) {
@@ -192,7 +197,7 @@ router.get('/:id/snapshot',
   requireEmployee,
   [
     param('id').isMongoId().withMessage('無效的任務ID'),
-    query('status').optional().isIn(['uncounted', 'normal', 'error']),
+    query('status').optional().isIn(['uncounted', 'normal', 'error', 'counted']),
     query('search').optional().isString().trim(),
     query('page').optional().isInt({ min: 1 }),
     query('limit').optional().isInt({ min: 1, max: 200 })
@@ -210,7 +215,11 @@ router.get('/:id/snapshot',
       let snapshot = task.stockSnapshot;
 
       if (status) {
-        snapshot = snapshot.filter(s => s.status === status);
+        if (status === 'counted') {
+          snapshot = snapshot.filter(s => s.status === 'normal' || s.status === 'error');
+        } else {
+          snapshot = snapshot.filter(s => s.status === status);
+        }
       }
 
       const productIds = snapshot.map(s => s.productId);

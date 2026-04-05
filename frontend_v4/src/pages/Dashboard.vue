@@ -23,27 +23,30 @@
           <v-card-text>
             <v-icon size="28" class="mb-1">mdi-check-circle</v-icon>
             <div class="text-body-2">已盤點</div>
-            <div class="text-h4 font-weight-bold">{{ stats.stats?.countedProducts || 0 }}</div>
+            <div class="text-h4 font-weight-bold">{{ latestTaskSummary.countedProducts }}</div>
             <v-progress-linear
-              v-if="completionRate > 0"
-              :model-value="completionRate"
+              v-if="latestTaskCompletionRate > 0"
+              :model-value="latestTaskCompletionRate"
               color="white"
               bg-color="rgba(255,255,255,0.3)"
               height="4"
               rounded
               class="mt-2"
             ></v-progress-linear>
-            <div class="text-caption mt-1" v-if="completionRate > 0">{{ completionRate }}% 完成</div>
+            <div class="text-caption mt-1" v-if="latestTaskSummary.totalProducts > 0">
+              {{ latestTaskCompletionRate }}% · {{ latestTaskSummary.countedProducts }}/{{ latestTaskSummary.totalProducts }}
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
 
       <v-col cols="6" sm="6" md="3">
-        <v-card color="error" dark class="stat-card" @click="$router.push('/products?error=true')">
+        <v-card color="error" dark class="stat-card" @click="$router.push('/inventory')">
           <v-card-text>
             <v-icon size="28" class="mb-1">mdi-alert-circle</v-icon>
             <div class="text-body-2">異常商品</div>
-            <div class="text-h4 font-weight-bold">{{ stats.stats?.errorProducts || 0 }}</div>
+            <div class="text-h4 font-weight-bold">{{ latestTaskSummary.errorProducts }}</div>
+            <div class="text-caption mt-1" v-if="latestTaskDate">最近盤點：{{ latestTaskDate }}</div>
           </v-card-text>
         </v-card>
       </v-col>
@@ -94,22 +97,24 @@
 
     <!-- 庫存警告 + 異常 Top 5 -->
     <v-row class="mt-2">
-      <!-- 異常商品 Top 5 -->
+      <!-- 異常商品 Top 5（基於最近盤點任務快照） -->
       <v-col cols="12" md="6">
         <v-card>
           <v-card-title>
             <v-icon start color="error">mdi-alert</v-icon>
             盤點異常 Top 5
             <v-chip v-if="topErrors.length" size="small" color="error" variant="tonal" class="ml-2">
-              {{ topErrors.length }}
+              {{ latestTaskSummary.errorProducts }} 異常
+            </v-chip>
+            <v-chip v-if="latestTaskDate" size="x-small" variant="tonal" class="ml-1">
+              {{ latestTaskDate }}
             </v-chip>
           </v-card-title>
           <v-card-text>
             <v-list v-if="topErrors.length" density="compact">
               <v-list-item
                 v-for="(item, index) in topErrors"
-                :key="item._id"
-                @click="$router.push(`/products/${item._id}`)"
+                :key="item.productId"
                 class="rounded mb-1"
               >
                 <template #prepend>
@@ -118,10 +123,11 @@
                   </v-avatar>
                 </template>
                 <v-list-item-title class="text-body-2">
-                  {{ item.name }}
+                  {{ item.product?.displayName || item.product?.name || '(未知商品)' }}
+                  <span v-if="item.product?.variantLabel" class="text-caption text-grey ml-1">{{ item.product.variantLabel }}</span>
                 </v-list-item-title>
                 <v-list-item-subtitle>
-                  系統: {{ item.expectedQty || item.stockQty }} / 盤點: {{ item.countedQty }}
+                  當下庫存: {{ item.snapshotStockQty }} / 盤點: {{ item.countedQty }}
                 </v-list-item-subtitle>
                 <template #append>
                   <v-chip size="small" color="error" variant="flat">
@@ -137,8 +143,8 @@
           </v-card-text>
           <v-card-actions v-if="topErrors.length">
             <v-spacer></v-spacer>
-            <v-btn variant="text" size="small" @click="$router.push('/products?error=true')">
-              查看全部異常
+            <v-btn variant="text" size="small" @click="$router.push('/inventory')">
+              查看盤點管理
               <v-icon end>mdi-arrow-right</v-icon>
             </v-btn>
           </v-card-actions>
@@ -219,18 +225,20 @@
             >
               <template #item.productName="{ item }">
                 <div class="d-flex align-center">
-                  <v-avatar size="24" class="mr-2">
-                    <img
-                      :src="item.productId?.wooData?.images?.[0]?.src || '/placeholder.png'"
-                      :alt="item.productId?.name"
-                    >
+                  <v-avatar size="28" rounded="lg" class="mr-2" color="grey-lighten-3">
+                    <v-img
+                      v-if="getProductImage(item.productId)"
+                      :src="getProductImage(item.productId)"
+                      cover
+                    />
+                    <v-icon v-else size="16" color="grey">mdi-package-variant-closed</v-icon>
                   </v-avatar>
-                  <div>
+                  <div style="min-width: 0;">
                     <div class="font-weight-medium text-truncate" style="max-width: 200px;">
                       {{ getProductDisplayName(item.productId) }}
                     </div>
-                    <div class="text-caption text-grey" v-if="getVariationInfo(item.productId)">
-                      {{ getVariationInfo(item.productId) }}
+                    <div class="text-caption text-grey" v-if="getVariationLabel(item.productId)">
+                      {{ getVariationLabel(item.productId) }}
                     </div>
                   </div>
                 </div>
@@ -339,6 +347,7 @@ const syncStatusData = ref({
 })
 const topErrors = ref([])
 const lowStockProducts = ref([])
+const latestTask = ref(null)
 
 const logHeaders = [
   { title: '商品名稱', key: 'productName' },
@@ -349,12 +358,11 @@ const logHeaders = [
 ]
 
 // Computed
-const completionRate = computed(() => {
-  const total = stats.value.stats?.totalProducts || 0
-  const counted = stats.value.stats?.countedProducts || 0
-  if (total === 0) return 0
-  return Math.round((counted / total) * 100)
+const latestTaskSummary = computed(() => latestTask.value?.summary || {
+  totalProducts: 0, countedProducts: 0, errorProducts: 0, completionRate: 0
 })
+const latestTaskCompletionRate = computed(() => latestTaskSummary.value.completionRate || 0)
+const latestTaskDate = computed(() => latestTask.value ? moment(latestTask.value.date).format('MM/DD') : '')
 
 // Methods
 const formatDate = (date) => {
@@ -372,12 +380,19 @@ const getProductDisplayName = (product) => {
   return product.name || 'N/A'
 }
 
-const getVariationInfo = (product) => {
+const getVariationLabel = (product) => {
   if (!product || product.type !== 'variation') return ''
-  if (product.attributes?.length > 0) {
-    return product.attributes.map(attr => `${attr.name}: ${attr.option}`).join(', ')
-  }
-  return ''
+  const attrs = (product.attributes || [])
+    .filter(a => a.option && a.name !== '貨況')
+    .map(a => a.option)
+  return attrs.length ? attrs.join(' / ') : ''
+}
+
+const getProductImage = (product) => {
+  if (!product) return null
+  if (product.wooData?.images?.[0]?.src) return product.wooData.images[0].src
+  if (product.parentId?.wooData?.images?.[0]?.src) return product.parentId.wooData.images[0].src
+  return null
 }
 
 const fetchDashboardData = async () => {
@@ -400,14 +415,20 @@ const fetchDashboardData = async () => {
     await inventoryStore.fetchLogs({ limit: 5 })
     recentLogs.value = inventoryStore.logs
 
-    // 取得異常商品 Top 5
+    // 取得最近盤點任務的統計與異常 Top 5（基於快照）
     try {
-      const errorRes = await api.get('/products/errors')
-      const errors = errorRes.data.products || []
-      // 按差異絕對值排序，取前5
-      topErrors.value = errors
-        .sort((a, b) => Math.abs(b.diffQty) - Math.abs(a.diffQty))
-        .slice(0, 5)
+      const taskRes = await api.get('/inventory-tasks', { params: { limit: 1 } })
+      const tasks = taskRes.data.tasks || []
+      if (tasks.length > 0) {
+        latestTask.value = tasks[0]
+        const snapshotRes = await api.get(`/inventory-tasks/${tasks[0]._id}/snapshot`, {
+          params: { status: 'error', limit: 100 }
+        })
+        const errorItems = snapshotRes.data.snapshot || []
+        topErrors.value = errorItems
+          .sort((a, b) => Math.abs(b.diffQty) - Math.abs(a.diffQty))
+          .slice(0, 5)
+      }
     } catch (e) {
       topErrors.value = []
     }

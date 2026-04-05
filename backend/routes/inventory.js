@@ -269,7 +269,7 @@ router.get('/logs',
             select: 'name sku barcode type parentId attributes wooData',
             populate: {
               path: 'parentId',
-              select: 'name sku type',
+              select: 'name sku type wooData.images',
               model: 'Product'
             }
           })
@@ -299,6 +299,99 @@ router.get('/logs',
       res.status(500).json({
         message: '獲取盤點記錄失敗'
       });
+    }
+  }
+);
+
+// GET /api/inventory/logs/export - 匯出盤點記錄 CSV
+router.get('/logs/export',
+  authenticateToken,
+  requireEmployee,
+  [
+    query('startDate').optional().isISO8601(),
+    query('endDate').optional().isISO8601(),
+    query('hasError').optional(),
+    query('method').optional().isString(),
+    query('search').optional().isString().trim()
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { startDate, endDate, hasError, method, search } = req.query;
+      let filter = {};
+
+      if (req.user.role === 'employee') {
+        filter.userId = req.user._id;
+      }
+
+      if (startDate || endDate) {
+        filter.createdAt = {};
+        if (startDate) filter.createdAt.$gte = new Date(startDate);
+        if (endDate) filter.createdAt.$lte = new Date(endDate);
+      }
+
+      if (hasError === 'true') {
+        filter.diffQty = { $ne: 0 };
+      } else if (hasError === 'false') {
+        filter.diffQty = 0;
+      }
+
+      if (method) {
+        filter.method = method;
+      }
+
+      const logs = await InventoryLog.find(filter)
+        .populate({
+          path: 'productId',
+          select: 'name sku barcode type parentId attributes',
+          populate: { path: 'parentId', select: 'name', model: 'Product' }
+        })
+        .populate('userId', 'name')
+        .sort({ createdAt: -1 })
+        .limit(10000)
+        .lean();
+
+      let filtered = logs;
+      if (search) {
+        const lower = search.toLowerCase();
+        filtered = logs.filter(log => {
+          const p = log.productId;
+          if (!p) return false;
+          const displayName = (p.type === 'variation' && p.parentId?.name) ? p.parentId.name : p.name;
+          return displayName?.toLowerCase().includes(lower) ||
+            p.sku?.toLowerCase().includes(lower) ||
+            p.barcode?.toLowerCase().includes(lower);
+        });
+      }
+
+      const header = '商品名稱,SKU,盤點人員,盤點方式,當下庫存,盤點數量,差異,狀態,盤點時間\n';
+      const rows = filtered.map(log => {
+        const p = log.productId;
+        const displayName = p ? ((p.type === 'variation' && p.parentId?.name) ? p.parentId.name : p.name) : '(已刪除)';
+        const attrs = (p?.attributes || []).filter(a => a.option && a.name !== '貨況').map(a => a.option).join('/');
+        const fullName = attrs ? `${displayName} (${attrs})` : displayName;
+        return [
+          `"${fullName.replace(/"/g, '""')}"`,
+          p?.sku || '',
+          log.userId?.name || '',
+          log.method || '',
+          log.expectedQty ?? '',
+          log.countedQty ?? '',
+          log.diffQty ?? '',
+          log.diffQty === 0 ? '正常' : '異常',
+          log.createdAt ? new Date(log.createdAt).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : ''
+        ].join(',');
+      }).join('\n');
+
+      const csv = '\uFEFF' + header + rows;
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="inventory_logs_${new Date().toISOString().slice(0,10)}.csv"`);
+      res.send(csv);
+
+    } catch (error) {
+      console.error('匯出盤點記錄失敗:', error);
+      res.status(500).json({ message: '匯出盤點記錄失敗' });
     }
   }
 );

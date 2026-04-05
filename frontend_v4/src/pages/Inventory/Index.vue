@@ -207,7 +207,7 @@
       <!-- 任務維度統計 -->
       <v-row class="mb-4">
         <v-col cols="6" md="3">
-          <v-card color="primary" variant="flat" theme="dark" class="stat-card">
+          <v-card color="primary" variant="flat" theme="dark" class="stat-card clickable-card" @click="viewCurrentTaskSnapshot('')">
             <v-card-text class="pa-4">
               <div class="d-flex align-center justify-space-between mb-2">
                 <v-icon size="32" class="stat-icon">mdi-package-variant</v-icon>
@@ -219,7 +219,7 @@
         </v-col>
 
         <v-col cols="6" md="3">
-          <v-card color="success" variant="flat" theme="dark" class="stat-card">
+          <v-card color="success" variant="flat" theme="dark" class="stat-card clickable-card" @click="viewCurrentTaskSnapshot('counted')">
             <v-card-text class="pa-4">
               <div class="d-flex align-center justify-space-between mb-2">
                 <v-icon size="32" class="stat-icon">mdi-check-circle</v-icon>
@@ -231,7 +231,7 @@
         </v-col>
 
         <v-col cols="6" md="3">
-          <v-card color="warning" variant="flat" theme="dark" class="stat-card">
+          <v-card color="warning" variant="flat" theme="dark" class="stat-card clickable-card" @click="viewCurrentTaskSnapshot('uncounted')">
             <v-card-text class="pa-4">
               <div class="d-flex align-center justify-space-between mb-2">
                 <v-icon size="32" class="stat-icon">mdi-clock-alert-outline</v-icon>
@@ -245,7 +245,7 @@
         </v-col>
 
         <v-col cols="6" md="3">
-          <v-card color="error" variant="flat" theme="dark" class="stat-card">
+          <v-card color="error" variant="flat" theme="dark" class="stat-card clickable-card" @click="viewCurrentTaskSnapshot('error')">
             <v-card-text class="pa-4">
               <div class="d-flex align-center justify-space-between mb-2">
                 <v-icon size="32" class="stat-icon">mdi-alert-circle</v-icon>
@@ -577,6 +577,7 @@
               <v-col cols="8" sm="4">
                 <v-btn-toggle v-model="detailDialog.statusFilter" mandatory density="compact" color="primary" divided variant="outlined">
                   <v-btn value="">全部</v-btn>
+                  <v-btn value="counted">已盤</v-btn>
                   <v-btn value="normal">正常</v-btn>
                   <v-btn value="error">異常</v-btn>
                   <v-btn value="uncounted">未盤</v-btn>
@@ -1028,6 +1029,23 @@ const exportData = async () => {
   }
 }
 
+const viewCurrentTaskSnapshot = (statusFilter) => {
+  if (!taskStore.currentTaskId) return
+  detailDialog.show = true
+  detailDialog.loading = false
+  detailDialog.task = taskStore.currentTask
+  detailDialog.snapshotItems = []
+  detailDialog.search = ''
+  detailDialog.statusFilter = statusFilter === 'counted' ? '' : statusFilter
+  detailDialog.pagination = { currentPage: 1, totalPages: 1, totalItems: 0 }
+
+  if (statusFilter === 'counted') {
+    detailDialog.statusFilter = 'counted'
+  }
+
+  loadSnapshotPage(1)
+}
+
 const openTaskDetail = async (taskId) => {
   detailDialog.show = true
   detailDialog.loading = true
@@ -1156,6 +1174,16 @@ onMounted(async () => {
 .text-truncate-wrapper {
   min-width: 0;
   overflow: hidden;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.clickable-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
 }
 
 .snapshot-table :deep(tbody tr) {
